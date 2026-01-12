@@ -309,6 +309,56 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .mode-toggle {
+            display: flex;
+            gap: 0;
+        }
+
+        .mode-btn {
+            padding: 8px 16px;
+            border: 2px solid #0f3460;
+            background: #1a1a2e;
+            color: #888;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:first-child {
+            border-radius: 4px 0 0 4px;
+        }
+
+        .mode-btn:last-child {
+            border-radius: 0 4px 4px 0;
+            border-left: none;
+        }
+
+        .mode-btn:hover {
+            background: #0f3460;
+            color: #eee;
+        }
+
+        .mode-btn.active {
+            background: #e94560;
+            border-color: #e94560;
+            color: #fff;
+        }
+
+        .filter-select {
+            padding: 6px 10px;
+            border: 2px solid #0f3460;
+            border-radius: 4px;
+            background: #1a1a2e;
+            color: #eee;
+            font-size: 0.85rem;
+            min-width: 150px;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: #e94560;
+        }
     </style>
 </head>
 <body>
@@ -316,6 +366,11 @@
         <header>
             <h1>ToxicDocs Geography Dashboard</h1>
             <div class="controls">
+                <div class="mode-toggle">
+                    <button id="mode-us" class="mode-btn active">US</button>
+                    <button id="mode-world" class="mode-btn">World</button>
+                </div>
+
                 <div class="search-container">
                     <input type="text" id="search-input" class="search-input" placeholder="Search location..." autocomplete="off">
                     <div id="autocomplete-results" class="autocomplete-results"></div>
@@ -327,7 +382,7 @@
                     <span id="min-count-display">50</span>
                 </div>
 
-                <div class="toggle-group">
+                <div id="us-filters" class="toggle-group">
                     <label class="toggle-label">
                         <input type="checkbox" id="toggle-states" checked>
                         <span class="checkmark"></span>
@@ -343,6 +398,13 @@
                         <span class="checkmark"></span>
                         Municipalities
                     </label>
+                </div>
+
+                <div id="world-filters" class="filter-controls" style="display: none;">
+                    <label>Country:</label>
+                    <select id="country-filter" class="filter-select">
+                        <option value="">All Countries</option>
+                    </select>
                 </div>
             </div>
         </header>
@@ -370,11 +432,20 @@
 
 
     <script>
+        // Current mode: 'us' or 'world'
+        let currentMode = 'us';
+
+        // Map settings per mode
+        const mapSettings = {
+            us: { center: [39.8283, -98.5795], zoom: 4 },
+            world: { center: [20, 0], zoom: 2 }
+        };
+
         // Initialize map centered on US
         const map = L.map('map', {
-            center: [39.8283, -98.5795],
-            zoom: 4,
-            minZoom: 3,
+            center: mapSettings.us.center,
+            zoom: mapSettings.us.zoom,
+            minZoom: 2,
             maxZoom: 12
         });
 
@@ -411,19 +482,31 @@
             return `https://www.toxicdocs.org/search?q=${encodeURIComponent('"' + name + '"')}`;
         }
 
-        function getToxicDocsUrlNameState(name, state) {
-            const query = `"${name}" "${state}"`;
+        function getToxicDocsUrlNameContext(name, context) {
+            const query = `"${name}" "${context}"`;
             return `https://www.toxicdocs.org/search?q=${encodeURIComponent(query)}`;
         }
 
         // Get current filter values
         function getFilters() {
-            return {
-                min_count: parseInt($('#min-count-slider').val()),
-                showStates: $('#toggle-states').is(':checked'),
-                showCounties: $('#toggle-counties').is(':checked'),
-                showMunicipalities: $('#toggle-municipalities').is(':checked')
-            };
+            if (currentMode === 'us') {
+                return {
+                    min_count: parseInt($('#min-count-slider').val()),
+                    showStates: $('#toggle-states').is(':checked'),
+                    showCounties: $('#toggle-counties').is(':checked'),
+                    showMunicipalities: $('#toggle-municipalities').is(':checked')
+                };
+            } else {
+                return {
+                    min_count: parseInt($('#min-count-slider').val()),
+                    country: $('#country-filter').val()
+                };
+            }
+        }
+
+        // Get API base URL for current mode
+        function getApiBase() {
+            return currentMode === 'us' ? '/api/geographies' : '/api/world/geographies';
         }
 
         // Load and display geography data
@@ -432,18 +515,26 @@
 
             try {
                 const filters = getFilters();
-                let url = `/api/geographies?min_count=${filters.min_count}`;
+                let url = `${getApiBase()}?min_count=${filters.min_count}`;
+
+                if (currentMode === 'world' && filters.country) {
+                    url += `&country=${encodeURIComponent(filters.country)}`;
+                }
 
                 const response = await fetch(url);
                 const data = await response.json();
 
-                // Filter based on toggles
-                allLocations = data.locations.filter(loc => {
-                    if (loc.type === 'state' && !filters.showStates) return false;
-                    if (loc.type === 'county' && !filters.showCounties) return false;
-                    if (loc.type === 'place' && !filters.showMunicipalities) return false;
-                    return true;
-                });
+                // Filter based on toggles (US mode only)
+                if (currentMode === 'us') {
+                    allLocations = data.locations.filter(loc => {
+                        if (loc.type === 'state' && !filters.showStates) return false;
+                        if (loc.type === 'county' && !filters.showCounties) return false;
+                        if (loc.type === 'place' && !filters.showMunicipalities) return false;
+                        return true;
+                    });
+                } else {
+                    allLocations = data.locations;
+                }
 
                 displayLocations(allLocations);
 
@@ -476,21 +567,29 @@
                     fillOpacity: 0.6
                 });
 
-                // Build location detail string
+                // Build location detail string based on mode
                 let detail = '';
-                if (loc.type === 'state') {
-                    detail = 'State';
+                let contextName = '';
+
+                if (currentMode === 'us') {
+                    if (loc.type === 'state') {
+                        detail = 'State';
+                    } else {
+                        const parts = [];
+                        if (loc.county) parts.push(loc.county + ' County');
+                        if (loc.state) parts.push(loc.state);
+                        detail = parts.join(', ');
+                    }
+                    contextName = loc.state || '';
                 } else {
-                    const parts = [];
-                    if (loc.county) parts.push(loc.county + ' County');
-                    if (loc.state) parts.push(loc.state);
-                    detail = parts.join(', ');
+                    detail = loc.country || '';
+                    contextName = loc.country || '';
                 }
 
                 // Create popup content with search buttons
                 let searchButtons = `<a href="${getToxicDocsUrlName(loc.name)}" target="_blank">Search "${loc.name}"</a>`;
-                if (loc.state) {
-                    searchButtons += `<a href="${getToxicDocsUrlNameState(loc.name, loc.state)}" target="_blank" class="btn-secondary">+ ${loc.state}</a>`;
+                if (contextName) {
+                    searchButtons += `<a href="${getToxicDocsUrlNameContext(loc.name, contextName)}" target="_blank" class="btn-secondary">+ ${contextName}</a>`;
                 }
 
                 const popupContent = `
@@ -510,12 +609,56 @@
         // Load stats
         async function loadStats() {
             try {
-                const response = await fetch('/api/geographies/stats');
+                const response = await fetch(`${getApiBase()}/stats`);
                 const stats = await response.json();
                 document.getElementById('stat-hotspots').textContent = stats.hotspots_500plus.toLocaleString();
             } catch (error) {
                 console.error('Error loading stats:', error);
             }
+        }
+
+        // Load world filters (countries) - respects current min_count
+        async function loadWorldFilters() {
+            try {
+                const minCount = parseInt($('#min-count-slider').val()) || 51;
+                const response = await fetch(`/api/world/geographies/filters?min_count=${minCount}`);
+                const data = await response.json();
+
+                const select = document.getElementById('country-filter');
+                select.innerHTML = '<option value="">All Countries</option>';
+
+                data.countries.forEach(country => {
+                    const option = document.createElement('option');
+                    option.value = country;
+                    option.textContent = country;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading world filters:', error);
+            }
+        }
+
+        // Switch mode (US/World)
+        function switchMode(mode) {
+            if (mode === currentMode) return;
+
+            currentMode = mode;
+
+            // Update button states
+            document.getElementById('mode-us').classList.toggle('active', mode === 'us');
+            document.getElementById('mode-world').classList.toggle('active', mode === 'world');
+
+            // Show/hide appropriate filters
+            document.getElementById('us-filters').style.display = mode === 'us' ? 'flex' : 'none';
+            document.getElementById('world-filters').style.display = mode === 'world' ? 'flex' : 'none';
+
+            // Center map appropriately
+            const settings = mapSettings[mode];
+            map.setView(settings.center, settings.zoom);
+
+            // Load data for new mode
+            loadGeographies();
+            loadStats();
         }
 
         // Handle min count slider
@@ -529,11 +672,23 @@
 
         slider.addEventListener('change', function() {
             clearTimeout(sliderTimeout);
-            sliderTimeout = setTimeout(loadGeographies, 300);
+            sliderTimeout = setTimeout(() => {
+                loadGeographies();
+                if (currentMode === 'world') {
+                    loadWorldFilters();  // Refresh country list for new threshold
+                }
+            }, 300);
         });
 
-        // Handle toggle changes
+        // Handle toggle changes (US mode)
         $('#toggle-states, #toggle-counties, #toggle-municipalities').on('change', loadGeographies);
+
+        // Handle country filter change (World mode)
+        $('#country-filter').on('change', loadGeographies);
+
+        // Handle mode toggle clicks
+        document.getElementById('mode-us').addEventListener('click', () => switchMode('us'));
+        document.getElementById('mode-world').addEventListener('click', () => switchMode('world'));
 
         // Autocomplete search functionality
         const searchInput = document.getElementById('search-input');
@@ -551,16 +706,18 @@
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    const response = await fetch(`/api/geographies/search?q=${encodeURIComponent(query)}&limit=15`);
+                    const response = await fetch(`${getApiBase()}/search?q=${encodeURIComponent(query)}&limit=15`);
                     const results = await response.json();
 
                     if (results.length === 0) {
                         autocompleteResults.innerHTML = '<div class="autocomplete-item"><span class="details">No results found</span></div>';
                     } else {
                         autocompleteResults.innerHTML = results.map(loc => {
-                            const details = loc.state ? `${loc.state}` : (loc.type || '');
+                            const details = currentMode === 'us'
+                                ? (loc.state ? `${loc.state}` : (loc.type || ''))
+                                : (loc.country || '');
                             return `
-                                <div class="autocomplete-item" data-lat="${loc.lat}" data-lng="${loc.lng}" data-name="${loc.name}" data-state="${loc.state || ''}">
+                                <div class="autocomplete-item" data-lat="${loc.lat}" data-lng="${loc.lng}" data-name="${loc.name}">
                                     <span class="count">${loc.count.toLocaleString()}</span>
                                     <span class="name">${loc.name}</span>
                                     <div class="details">${details}</div>
@@ -581,8 +738,6 @@
             if (item && item.dataset.lat) {
                 const lat = parseFloat(item.dataset.lat);
                 const lng = parseFloat(item.dataset.lng);
-                const name = item.dataset.name;
-                const state = item.dataset.state;
 
                 // Zoom to location
                 map.setView([lat, lng], 8);
@@ -612,6 +767,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadGeographies();
             loadStats();
+            loadWorldFilters();  // Pre-load world filters
         });
     </script>
 </body>

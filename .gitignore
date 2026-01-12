@@ -2,3 +2,11 @@ __pycache__/
 venv/
 *.pyc
 .DS_Store
+
+# Large data files (regenerate with setup scripts)
+data/cities5000.txt
+data/cities5000.zip
+data/countryInfo.txt
+data/world_locations.json
+data/city_countries_index.json
+data/countries.json
