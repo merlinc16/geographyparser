@@ -133,10 +133,30 @@ class WorldGeographyExtractor:
 
         return mentions
 
+    # Minimum population for a city to be included (filters obscure places)
+    MIN_POPULATION = 50000
+    # Minimum city name length (filters short ambiguous names)
+    MIN_NAME_LENGTH = 4
+
+    def _is_valid_city(self, city, country_name):
+        """Check if city meets minimum requirements (population, name length)."""
+        if len(city) < self.MIN_NAME_LENGTH:
+            return False
+
+        key = f"{city.lower()}, {country_name.lower()}"
+        if key not in self.locations:
+            return False
+
+        loc = self.locations[key]
+        if loc.get('population', 0) < self.MIN_POPULATION:
+            return False
+
+        return True
+
     def extract_locations(self, text):
         """
-        Extract international locations using proximity-based matching.
-        Requires both city AND country to appear close together in text.
+        Extract international locations using strict pattern matching.
+        Only matches explicit "City, Country" patterns - no loose proximity.
         """
         if not text:
             return []
@@ -146,43 +166,38 @@ class WorldGeographyExtractor:
             text = text[:50000]
 
         locations = []
-
-        # First, find all country mentions
-        country_mentions = self.find_country_mentions(text)
-        if not country_mentions:
-            return locations
+        found_keys = set()
 
         # Pattern 1: "City, Country" - direct adjacency (most reliable)
         pattern1 = r'\b([A-Z][a-z\u00C0-\u024F]+(?:[\s-][A-Z][a-z\u00C0-\u024F]+)*),\s*([A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)*)\b'
 
         for match in re.finditer(pattern1, text):
             city, country = match.groups()
-            city_lower = city.lower()
-            country_lower = country.lower()
-
-            country_code = self.countries.get('name_to_code', {}).get(country_lower)
+            country_code = self.countries.get('name_to_code', {}).get(country.lower())
             if country_code:
                 country_name = self.countries['code_to_name'].get(country_code, country)
-                key = f"{city_lower}, {country_name.lower()}"
-                if key in self.locations:
-                    locations.append((city, country_name, country_code))
+                if self._is_valid_city(city, country_name):
+                    key = f"{city.lower()}, {country_name.lower()}"
+                    if key not in found_keys:
+                        locations.append((city, country_name, country_code))
+                        found_keys.add(key)
 
         # Pattern 2: "City (Country)" format
         pattern2 = r'\b([A-Z][a-z\u00C0-\u024F]+(?:[\s-][A-Z][a-z\u00C0-\u024F]+)*)\s*\(([A-Z]{2,}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\)'
 
         for match in re.finditer(pattern2, text):
             city, country = match.groups()
-            city_lower = city.lower()
-
             country_code = self.countries.get('name_to_code', {}).get(country.lower())
             if not country_code and country.upper() in self.countries.get('code_to_name', {}):
                 country_code = country.upper()
 
             if country_code:
                 country_name = self.countries['code_to_name'].get(country_code, country)
-                key = f"{city_lower}, {country_name.lower()}"
-                if key in self.locations:
-                    locations.append((city, country_name, country_code))
+                if self._is_valid_city(city, country_name):
+                    key = f"{city.lower()}, {country_name.lower()}"
+                    if key not in found_keys:
+                        locations.append((city, country_name, country_code))
+                        found_keys.add(key)
 
         # Pattern 3: "City, XX" country code format
         pattern3 = r'\b([A-Z][a-z\u00C0-\u024F]+(?:[\s-][A-Z][a-z\u00C0-\u024F]+)*),\s*([A-Z]{2})\b'
@@ -197,40 +212,30 @@ class WorldGeographyExtractor:
             if code in us_states:
                 continue
 
-            city_lower = city.lower()
             actual_code = 'GB' if code == 'UK' else code
-
             country_name = self.countries.get('code_to_name', {}).get(actual_code)
-            if country_name:
-                key = f"{city_lower}, {country_name.lower()}"
-                if key in self.locations:
+            if country_name and self._is_valid_city(city, country_name):
+                key = f"{city.lower()}, {country_name.lower()}"
+                if key not in found_keys:
                     locations.append((city, country_name, actual_code))
+                    found_keys.add(key)
 
-        # Pattern 4: Proximity-based - city within 100 chars of country mention
-        # Only for cities NOT already found above
-        found_cities = {loc[0].lower() for loc in locations}
+        # Pattern 4: "in/from/near City, Country" format
+        pattern4 = r'\b(?:in|from|near|at)\s+([A-Z][a-z\u00C0-\u024F]+(?:[\s-][A-Z][a-z\u00C0-\u024F]+)*),\s*([A-Z][a-z\u00C0-\u024F]+(?:\s+[A-Z][a-z\u00C0-\u024F]+)*)\b'
 
-        for country_start, country_end, country_code, country_name in country_mentions:
-            # Get text window around country mention
-            window_start = max(0, country_start - 100)
-            window_end = min(len(text), country_end + 100)
-            window = text[window_start:window_end]
-
-            # Look for capitalized words that could be cities
-            city_pattern = r'\b([A-Z][a-z\u00C0-\u024F]+(?:[\s-][A-Z][a-z\u00C0-\u024F]+)?)\b'
-            for city_match in re.finditer(city_pattern, window):
-                city = city_match.group(1)
-                city_lower = city.lower()
-
-                # Skip if already found
-                if city_lower in found_cities:
-                    continue
-
-                # Check if this city exists in this country
-                key = f"{city_lower}, {country_name.lower()}"
-                if key in self.locations:
-                    locations.append((city, country_name, country_code))
-                    found_cities.add(city_lower)
+        for match in re.finditer(pattern4, text, re.IGNORECASE):
+            city, country = match.groups()
+            # Ensure city starts with capital (the pattern is case-insensitive for the preposition)
+            if not city[0].isupper():
+                continue
+            country_code = self.countries.get('name_to_code', {}).get(country.lower())
+            if country_code:
+                country_name = self.countries['code_to_name'].get(country_code, country)
+                if self._is_valid_city(city, country_name):
+                    key = f"{city.lower()}, {country_name.lower()}"
+                    if key not in found_keys:
+                        locations.append((city, country_name, country_code))
+                        found_keys.add(key)
 
         return locations
 
