@@ -504,9 +504,17 @@
             }
         }
 
+        // Detect base path (handles /geography on server vs / locally)
+        function getBasePath() {
+            const path = window.location.pathname;
+            if (path.startsWith('/geography')) return '/geography';
+            return '';
+        }
+
         // Get API base URL for current mode
         function getApiBase() {
-            return currentMode === 'us' ? '/api/geographies' : '/api/world/geographies';
+            const base = getBasePath();
+            return currentMode === 'us' ? `${base}/api/geographies` : `${base}/api/world/geographies`;
         }
 
         // Load and display geography data
@@ -621,7 +629,7 @@
         async function loadWorldFilters() {
             try {
                 const minCount = parseInt($('#min-count-slider').val()) || 51;
-                const response = await fetch(`/api/world/geographies/filters?min_count=${minCount}`);
+                const response = await fetch(`${getBasePath()}/api/world/geographies/filters?min_count=${minCount}`);
                 const data = await response.json();
 
                 const select = document.getElementById('country-filter');
