@@ -652,6 +652,13 @@
             document.getElementById('us-filters').style.display = mode === 'us' ? 'flex' : 'none';
             document.getElementById('world-filters').style.display = mode === 'world' ? 'flex' : 'none';
 
+            // Set appropriate default min_count for mode
+            const slider = document.getElementById('min-count-slider');
+            const sliderDisplay = document.getElementById('min-count-display');
+            const defaultCount = mode === 'world' ? 5 : 51;
+            slider.value = defaultCount;
+            sliderDisplay.textContent = defaultCount;
+
             // Center map appropriately
             const settings = mapSettings[mode];
             map.setView(settings.center, settings.zoom);
@@ -659,6 +666,9 @@
             // Load data for new mode
             loadGeographies();
             loadStats();
+            if (mode === 'world') {
+                loadWorldFilters();
+            }
         }
 
         // Handle min count slider
