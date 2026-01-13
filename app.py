@@ -227,6 +227,55 @@ def get_world_geographies():
     })
 
 
+@app.route('/api/world/geographies/countries')
+def get_world_countries():
+    """
+    Get country-level aggregated data (sum of all cities per country).
+    Query params:
+        min_count: minimum total mention count for country (default 1)
+        limit: max results (default 500)
+    """
+    min_count = int(request.args.get('min_count', 1))
+    limit = min(int(request.args.get('limit', 500)), 1000)
+
+    # Aggregate cities by country
+    pipeline = [
+        {
+            '$group': {
+                '_id': '$country',
+                'country_code': {'$first': '$country_code'},
+                'total_count': {'$sum': '$count'},
+                'city_count': {'$sum': 1},
+                'avg_lat': {'$avg': '$lat'},
+                'avg_lng': {'$avg': '$lng'}
+            }
+        },
+        {'$match': {'total_count': {'$gte': min_count}}},
+        {'$sort': {'total_count': -1}},
+        {'$limit': limit}
+    ]
+
+    results = list(db.world_geography_counts.aggregate(pipeline))
+
+    # Format results
+    locations = [{
+        'name': r['_id'],
+        'country': r['_id'],
+        'country_code': r['country_code'],
+        'count': r['total_count'],
+        'city_count': r['city_count'],
+        'lat': r['avg_lat'],
+        'lng': r['avg_lng'],
+        'type': 'country'
+    } for r in results if r['_id']]
+
+    return jsonify({
+        'locations': locations,
+        'total': len(locations),
+        'min_count': min_count
+    })
+
+
 @app.route('/api/world/geographies/filters')
 def get_world_filters():
     """

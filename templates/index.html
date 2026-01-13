@@ -400,11 +400,25 @@
                     </label>
                 </div>
 
-                <div id="world-filters" class="filter-controls" style="display: none;">
-                    <label>Country:</label>
-                    <select id="country-filter" class="filter-select">
-                        <option value="">All Countries</option>
-                    </select>
+                <div id="world-filters" style="display: none;">
+                    <div class="toggle-group">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="toggle-countries" checked>
+                            <span class="checkmark"></span>
+                            Countries
+                        </label>
+                        <label class="toggle-label">
+                            <input type="checkbox" id="toggle-cities">
+                            <span class="checkmark"></span>
+                            Cities
+                        </label>
+                    </div>
+                    <div class="filter-controls">
+                        <label>Country:</label>
+                        <select id="country-filter" class="filter-select">
+                            <option value="">All Countries</option>
+                        </select>
+                    </div>
                 </div>
             </div>
         </header>
@@ -499,7 +513,9 @@
             } else {
                 return {
                     min_count: parseInt($('#min-count-slider').val()),
-                    country: $('#country-filter').val()
+                    country: $('#country-filter').val(),
+                    showCountries: $('#toggle-countries').is(':checked'),
+                    showCities: $('#toggle-cities').is(':checked')
                 };
             }
         }
@@ -523,17 +539,14 @@
 
             try {
                 const filters = getFilters();
-                let url = `${getApiBase()}?min_count=${filters.min_count}`;
+                const base = getBasePath();
 
-                if (currentMode === 'world' && filters.country) {
-                    url += `&country=${encodeURIComponent(filters.country)}`;
-                }
-
-                const response = await fetch(url);
-                const data = await response.json();
-
-                // Filter based on toggles (US mode only)
                 if (currentMode === 'us') {
+                    // US mode - single API call
+                    let url = `${getApiBase()}?min_count=${filters.min_count}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+
                     allLocations = data.locations.filter(loc => {
                         if (loc.type === 'state' && !filters.showStates) return false;
                         if (loc.type === 'county' && !filters.showCounties) return false;
@@ -541,7 +554,25 @@
                         return true;
                     });
                 } else {
-                    allLocations = data.locations;
+                    // World mode - fetch countries and/or cities based on toggles
+                    allLocations = [];
+
+                    if (filters.showCountries) {
+                        let url = `${base}/api/world/geographies/countries?min_count=${filters.min_count}`;
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        allLocations = allLocations.concat(data.locations);
+                    }
+
+                    if (filters.showCities) {
+                        let url = `${getApiBase()}?min_count=${filters.min_count}`;
+                        if (filters.country) {
+                            url += `&country=${encodeURIComponent(filters.country)}`;
+                        }
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        allLocations = allLocations.concat(data.locations);
+                    }
                 }
 
                 displayLocations(allLocations);
@@ -590,8 +621,13 @@
                     }
                     contextName = loc.state || '';
                 } else {
-                    detail = loc.country || '';
-                    contextName = loc.country || '';
+                    if (loc.type === 'country') {
+                        detail = `Country (${loc.city_count || 0} cities)`;
+                        contextName = '';
+                    } else {
+                        detail = loc.country || '';
+                        contextName = loc.country || '';
+                    }
                 }
 
                 // Create popup content with search buttons
@@ -700,6 +736,9 @@
 
         // Handle toggle changes (US mode)
         $('#toggle-states, #toggle-counties, #toggle-municipalities').on('change', loadGeographies);
+
+        // Handle toggle changes (World mode)
+        $('#toggle-countries, #toggle-cities').on('change', loadGeographies);
 
         // Handle country filter change (World mode)
         $('#country-filter').on('change', loadGeographies);
